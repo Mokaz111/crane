@@ -1,5 +1,6 @@
 package resource
 
+import "C"
 import (
 	"encoding/json"
 	"fmt"
@@ -22,6 +23,9 @@ import (
 	"github.com/gocrane/crane/pkg/recommendation/framework"
 	"github.com/gocrane/crane/pkg/utils"
 )
+
+const ResourceGPU = "gpu"
+const ResourceGpuMemory = "gpumemory"
 
 const callerFormat = "ResourceRecommendationCaller-%s-%s"
 
@@ -82,7 +86,40 @@ func (rr *ResourceRecommender) makeMemConfig() *config.Config {
 		},
 	}
 }
-
+func (rr *ResourceRecommender) makeGpuConfig() *config.Config {
+	return &config.Config{
+		Percentile: &predictionapi.Percentile{
+			Aggregated:        true,
+			HistoryLength:     rr.GpuModelHistoryLength,
+			SampleInterval:    rr.GpuSampleInterval,
+			MarginFraction:    rr.GpuRequestMarginFraction,
+			TargetUtilization: rr.GpuTargetUtilization,
+			Percentile:        rr.GpuRequestPercentile,
+			Histogram: predictionapi.HistogramConfig{
+				HalfLife:   "24h",
+				BucketSize: rr.GpuHistogramBucketSize,
+				MaxValue:   rr.GpuHistogramMaxValue,
+			},
+		},
+	}
+}
+func (rr *ResourceRecommender) makeGpuMemConfig() *config.Config {
+	return &config.Config{
+		Percentile: &predictionapi.Percentile{
+			Aggregated:        true,
+			HistoryLength:     rr.GpuMemHistoryLength,
+			SampleInterval:    rr.GpuMemSampleInterval,
+			MarginFraction:    rr.GpuMemMarginFraction,
+			Percentile:        rr.GpuMemPercentile,
+			TargetUtilization: rr.GpuMemTargetUtilization,
+			Histogram: predictionapi.HistogramConfig{
+				HalfLife:   "48h",
+				BucketSize: rr.GpuMemHistogramBucketSize,
+				MaxValue:   rr.GpuMemHistogramMaxValue,
+			},
+		},
+	}
+}
 func (rr *ResourceRecommender) Recommend(ctx *framework.RecommendationContext) error {
 	predictor := ctx.PredictorMgr.GetPredictor(predictionapi.AlgorithmTypePercentile)
 	if predictor == nil {
@@ -156,6 +193,58 @@ func (rr *ResourceRecommender) Recommend(ctx *framework.RecommendationContext) e
 		memQuantity := resource.NewQuantity(v, resource.BinarySI)
 		klog.Infof("%s: container %s recommended memory %s", ctx.String(), c.Name, memQuantity.String())
 
+		//gpu count
+		metricNamer = metricnaming.ResourceToContainerMetricNamer(namespace, ctx.Recommendation.Spec.TargetRef.APIVersion,
+			ctx.Recommendation.Spec.TargetRef.Kind, ctx.Recommendation.Spec.TargetRef.Name, c.Name, ResourceGPU, caller)
+		klog.Infof("%s: GPU query for resource request recommendation: %s", ctx.String(), metricNamer.BuildUniqueKey())
+		gpuConfig := rr.makeGpuConfig()
+		//查询预测值
+		tsList, err = utils.QueryPredictedValuesOnce(ctx.Recommendation, predictor, caller, gpuConfig, metricNamer)
+		if err != nil {
+			return err
+		}
+		if len(tsList) < 1 || len(tsList[0].Samples) < 1 {
+			return fmt.Errorf("no value retured for queryExpr: %s", metricNamer.BuildUniqueKey())
+		}
+		// Check timestamp is completed
+		if rr.HistoryCompletionCheck {
+			completion, existDays, err := utils.DetectTimestampCompletion(tsList, rr.GpuModelHistoryLength, time.Now())
+			if !completion || err != nil {
+				return fmt.Errorf("%s:gpu timestamps are not completed, expect %s actual %d days", metricNamer.BuildUniqueKey(), rr.GpuModelHistoryLength, existDays)
+			}
+		}
+
+		v = int64(tsList[0].Samples[0].Value * 1000)
+		gpuQuantity := resource.NewMilliQuantity(v, resource.DecimalSI)
+		klog.Infof("%s: container %s recommended gpu %s", ctx.String(), c.Name, gpuQuantity.String())
+		//
+
+		metricNamer = metricnaming.ResourceToContainerMetricNamer(namespace, ctx.Recommendation.Spec.TargetRef.APIVersion,
+			ctx.Recommendation.Spec.TargetRef.Kind, ctx.Recommendation.Spec.TargetRef.Name, c.Name, ResourceGpuMemory, caller)
+		klog.Infof("%s GpuMemory query for resource request recommendation: %s", ctx.String(), metricNamer.BuildUniqueKey())
+		gpumemConfig := rr.makeGpuMemConfig()
+		tsList, err = utils.QueryPredictedValuesOnce(ctx.Recommendation, predictor, caller, gpumemConfig, metricNamer)
+		if err != nil {
+			return err
+		}
+		if len(tsList) < 1 || len(tsList[0].Samples) < 1 {
+			return fmt.Errorf("no value retured for queryExpr: %s", metricNamer.BuildUniqueKey())
+		}
+		// Check timestamp is completed
+		if rr.HistoryCompletionCheck {
+			completion, existDays, err := utils.DetectTimestampCompletion(tsList, rr.GpuMemHistoryLength, time.Now())
+			if !completion || err != nil {
+				return fmt.Errorf("%s: gpumemory timestamps are not completed, expect %s actual %d days ", metricNamer.BuildUniqueKey(), rr.GpuMemHistoryLength, existDays)
+			}
+		}
+
+		v = int64(tsList[0].Samples[0].Value)
+		if v <= 0 {
+			return fmt.Errorf("no enough metrics")
+		}
+		gpumemQuantity := resource.NewQuantity(v, resource.BinarySI)
+		klog.Infof("%s: container %s recommended memory %s", ctx.String(), c.Name, memQuantity.String())
+		//
 		// Use oom protected memory if exist
 		if rr.OOMProtection {
 			oomProtectMem := rr.MemoryOOMProtection(oomRecords, namespace, ctx.Object.GetName(), c.Name)
@@ -177,6 +266,8 @@ func (rr *ResourceRecommender) Recommend(ctx *framework.RecommendationContext) e
 
 		cr.Target[corev1.ResourceCPU] = cpuQuantity.String()
 		cr.Target[corev1.ResourceMemory] = memQuantity.String()
+		cr.Target[ResourceGPU] = gpuQuantity.String()
+		cr.Target[ResourceGpuMemory] = gpumemQuantity.String()
 
 		newContainerSpec := corev1.Container{
 			Name: c.Name,
@@ -184,6 +275,8 @@ func (rr *ResourceRecommender) Recommend(ctx *framework.RecommendationContext) e
 				Requests: corev1.ResourceList{
 					corev1.ResourceCPU:    *cpuQuantity,
 					corev1.ResourceMemory: *memQuantity,
+					ResourceGPU:           *gpuQuantity,
+					ResourceGpuMemory:     *gpumemQuantity,
 				},
 			},
 		}
@@ -194,6 +287,8 @@ func (rr *ResourceRecommender) Recommend(ctx *framework.RecommendationContext) e
 				Requests: corev1.ResourceList{
 					corev1.ResourceCPU:    c.Resources.Requests[corev1.ResourceCPU],
 					corev1.ResourceMemory: c.Resources.Requests[corev1.ResourceMemory],
+					ResourceGPU:           c.Resources.Requests[ResourceGPU],
+					ResourceGpuMemory:     c.Resources.Requests[ResourceGpuMemory],
 				},
 			},
 		}
