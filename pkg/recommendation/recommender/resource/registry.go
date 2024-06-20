@@ -34,6 +34,20 @@ type ResourceRecommender struct {
 	MemHistogramBucketSize   string
 	MemHistogramMaxValue     string
 	HistoryCompletionCheck   bool
+	GpuSampleInterval        string
+	GpuRequestPercentile     string
+	GpuRequestMarginFraction string
+	GpuTargetUtilization     string
+	GpuModelHistoryLength    string
+	GpuMemSampleInterval        string
+	GpuMemPercentile            string
+	GpuMemMarginFraction        string
+	GpuMemTargetUtilization     string
+	GpuMemHistoryLength         string
+	GpuHistogramMaxValue     string
+	GpuHistogramBucketSize   string
+	GpuMemHistogramBucketSize   string
+	GpuMemHistogramMaxValue     string
 }
 
 func init() {
@@ -58,6 +72,17 @@ func NewResourceRecommender(recommender apis.Recommender, recommendationRule ana
 	memMarginFraction := recommender.GetConfigString("mem-request-margin-fraction", "0.15")
 	memTargetUtilization := recommender.GetConfigString("mem-target-utilization", "1.0")
 	memHistoryLength := recommender.GetConfigString("mem-model-history-length", "168h")
+
+	gpuSampleInterval := recommender.GetConfigString("gpu-sample-interval", "1m")
+	gpuPercentile := recommender.GetConfigString("gpu-request-percentile", "0.99")
+	gpuMarginFraction := recommender.GetConfigString("gpu-request-margin-fraction", "0.15")
+	gpuTargetUtilization := recommender.GetConfigString("gpu-target-utilization", "1.0")
+	gpuHistoryLength := recommender.GetConfigString("gpu-model-history-length", "168h")
+	gpumemSampleInterval := recommender.GetConfigString("gpumem-sample-interval", "1m")
+	gpumemPercentile := recommender.GetConfigString("gpumem-request-percentile", "0.99")
+	gpumemMarginFraction := recommender.GetConfigString("gpumem-request-margin-fraction", "0.15")
+	gpumemTargetUtilization := recommender.GetConfigString("gpumem-target-utilization", "1.0")
+	gpumemHistoryLength := recommender.GetConfigString("gpumem-model-history-length", "168h")
 
 	specificationBool, err := recommender.GetConfigBool("specification", false)
 	if err != nil {
@@ -90,6 +115,11 @@ func NewResourceRecommender(recommender apis.Recommender, recommendationRule ana
 	memHistogramBucketSize := recommender.GetConfigString("mem-histogram-bucket-size", "104857600")
 	memHistogramMaxValue := recommender.GetConfigString("mem-histogram-max-value", "104857600000")
 
+	gpuHistogramBucketSize := recommender.GetConfigString("gpu-histogram-bucket-size", "0.1")
+	gpuHistogramMaxValue := recommender.GetConfigString("gpu-histogram-max-value", "100")
+	gpumemHistogramBucketSize := recommender.GetConfigString("mem-histogram-bucket-size", "104857600")
+	gpumemHistogramMaxValue := recommender.GetConfigString("mem-histogram-max-value", "104857600000")
+
 	historyCompletion, err := recommender.GetConfigBool("history-completion-check", false)
 	if err != nil {
 		return nil, err
@@ -117,5 +147,19 @@ func NewResourceRecommender(recommender apis.Recommender, recommendationRule ana
 		memHistogramBucketSize,
 		memHistogramMaxValue,
 		historyCompletion,
+		gpuSampleInterval,
+		gpuPercentile,
+		gpuMarginFraction,
+		gpuTargetUtilization,
+		gpuHistoryLength,
+		gpumemSampleInterval,
+		gpumemPercentile,
+		gpumemMarginFraction,
+		gpumemTargetUtilization,
+		gpumemHistoryLength,
+		gpuHistogramBucketSize,
+		gpuHistogramMaxValue,
+		gpumemHistogramBucketSize,
+		gpumemHistogramMaxValue,
 	}, nil
 }
